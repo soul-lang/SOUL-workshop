@@ -1,0 +1,168 @@
+
+/**
+    This is an auto-generated SOUL patch template.
+    This example code simply plays a trivial sinewave mono-synth, and
+    it's up to you to build upon this and create a real synthesiser!
+*/
+graph MonoSynth  [[main]]
+{
+    input stream float drive [[ name: "Drive", min: 1.0, max: 50.0, init: 1.0 ]];
+    input event float attack [[ name: "Attack", min: 0.0, max: 100.0, init: 1.0 ]];
+    input event float release [[ name: "Release", min: 0.0, max: 100.0, init: 1.0 ]];
+
+    input event soul::midi::Message midiIn;
+    output stream float audioOut;
+
+    let
+    {
+        midiParser = soul::midi::MPEParser;
+        voice = SineOsc;
+        waveshaper = Waveshaper;
+        envelope = Envelope;
+        gain = Gain;
+    }
+
+    connection
+    {
+        attack              -> envelope.attack;
+        release             -> envelope.release;
+        drive               -> waveshaper.drive;
+        
+        midiIn              -> midiParser.parseMIDI;
+        midiParser.eventOut -> voice.eventIn, envelope.eventIn;
+        voice.audioOut      -> waveshaper.audioIn;
+        waveshaper.audioOut -> gain.audioIn;
+        gain.audioOut       -> audioOut;
+        envelope.audioOut   -> gain.gainIn;
+    }
+}
+
+//==============================================================================
+processor SineOsc
+{
+    input event (soul::note_events::NoteOn,
+                 soul::note_events::NoteOff) eventIn;
+
+    output stream float audioOut;
+
+    event eventIn (soul::note_events::NoteOn e)
+    {
+        currentNote = e.note;
+        phaseIncrement = float (twoPi * processor.period * soul::noteNumberToFrequency (e.note));
+    }
+
+    event eventIn (soul::note_events::NoteOff e)
+    {
+        if (e.note == currentNote)
+            currentNote = 0;
+    }
+
+    float currentNote, phaseIncrement;
+
+    void run()
+    {
+        float phase;
+        phaseIncrement = 0.0f;
+
+        loop
+        {
+            phase = addModulo2Pi (phase, phaseIncrement);
+
+            audioOut << sin (phase);
+            advance();
+        }
+    }
+}
+
+//==============================================================================
+processor Waveshaper
+{
+    input stream float drive [[ name: "Drive", min: 1.0, max: 50.0, init: 1.0 ]];
+
+    input stream float audioIn;
+    output stream float audioOut;
+
+    void run()
+    {
+        loop
+        {
+            audioOut << tanh (drive * audioIn);
+            advance();
+        }
+    }
+}
+
+
+//==============================================================================
+processor Envelope
+{
+    input event float attack [[ name: "Attack", min: 0.0, max: 100.0, init: 1.0 ]];
+    input event float release [[ name: "Release", min: 0.0, max: 100.0, init: 1.0 ]];
+
+    input event (soul::note_events::NoteOn,
+                 soul::note_events::NoteOff) eventIn;
+
+    output stream float audioOut;
+
+    event attack (float a)
+    {
+        let attackSamples = processor.frequency * (0.001 + a * 0.1f);
+
+        attackStep = 1.0f / float (attackSamples);
+    }
+
+    event release (float r)
+    {
+        let releaseSamples = processor.frequency * (0.01 + r * 0.1f);
+
+        releaseRamp = pow (0.0001f, 1.0f / float (releaseSamples));
+    }
+
+    event eventIn (soul::note_events::NoteOn noteOn)
+    {
+        currentNote = noteOn.note;
+    }
+
+    event eventIn (soul::note_events::NoteOff noteOff)
+    {
+        if (currentNote == noteOff.note)
+            currentNote = 0;
+    }
+
+    float currentNote;
+
+    float attackStep = 0.0001f;
+    float releaseRamp = 0.99999f;
+
+    float out;
+
+    void run()
+    {
+
+        loop
+        {
+            if (currentNote > 0)
+                out = min (1.0f, out + attackStep);
+            else
+                out = max (0.0f, out * releaseRamp);
+
+            audioOut << out;
+            advance();
+        }
+    }
+}
+
+processor Gain
+{
+    input stream float audioIn, gainIn;
+    output stream float audioOut;
+
+    void run()
+    {
+        loop
+        {
+            audioOut << audioIn * gainIn;
+            advance();
+        }
+    }
+}

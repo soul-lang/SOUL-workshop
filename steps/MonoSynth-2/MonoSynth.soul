@@ -1,0 +1,91 @@
+
+/**
+    This is an auto-generated SOUL patch template.
+    This example code simply plays a trivial sinewave mono-synth, and
+    it's up to you to build upon this and create a real synthesiser!
+*/
+graph MonoSynth  [[main]]
+{
+    input stream float drive [[ name: "Drive", min: 1.0, max: 50.0, init: 1.0 ]];
+
+    input event soul::midi::Message midiIn;
+    output stream float audioOut;
+
+    let
+    {
+        midiParser = soul::midi::MPEParser;
+        voice = SineOsc;
+        waveshaper = Waveshaper;
+    }
+
+    connection
+    {
+        drive               -> waveshaper.drive;
+        
+        midiIn              -> midiParser.parseMIDI;
+        midiParser.eventOut -> voice.eventIn;
+        voice.audioOut      -> waveshaper.audioIn;
+        waveshaper.audioOut -> audioOut;
+    }
+}
+
+//==============================================================================
+processor SineOsc
+{
+    input event (soul::note_events::NoteOn,
+                 soul::note_events::NoteOff) eventIn;
+
+    output stream float audioOut;
+
+    event eventIn (soul::note_events::NoteOn e)
+    {
+        currentNote = e.note;
+        phaseIncrement = float (twoPi * processor.period * soul::noteNumberToFrequency (e.note));
+    }
+
+    event eventIn (soul::note_events::NoteOff e)
+    {
+        if (e.note == currentNote)
+            currentNote = 0;
+    }
+
+    float currentNote, phaseIncrement, amplitude;
+
+    void run()
+    {
+        float phase;
+        phaseIncrement = 0.0f;
+
+        loop
+        {
+            // A very simple amplitude envelope - linear attack, exponential decay
+            if (currentNote == 0)
+                amplitude *= 0.999f;
+            else
+                amplitude = min (amplitude + 0.001f, 1.0f);
+
+            phase = addModulo2Pi (phase, phaseIncrement);
+
+            audioOut << amplitude * sin (phase);
+            advance();
+        }
+    }
+}
+
+//==============================================================================
+processor Waveshaper
+{
+    input stream float drive [[ name: "Drive", min: 1.0, max: 50.0, init: 1.0 ]];
+
+    input stream float audioIn;
+    output stream float audioOut;
+
+    void run()
+    {
+        loop
+        {
+            audioOut << tanh (drive * audioIn);
+            advance();
+        }
+    }
+}
